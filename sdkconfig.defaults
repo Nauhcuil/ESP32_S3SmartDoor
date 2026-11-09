@@ -1,0 +1,163 @@
+# This file was generated using idf.py save-defconfig. It can be edited manually.
+# Espressif IoT Development Framework (ESP-IDF)  Project Minimal Configuration
+#
+# ==================== 目标与 Flash / 分区 ====================
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# ==================== PSRAM（必须开启 OCT 80MHz） ====================
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+# WiFi 内存**优先**分配 PSRAM：WiFi 驱动的 wifi_malloc / wifi_calloc 变为
+# heap_caps_malloc_prefer(PSRAM → 内部)，静态 TX、缓存 TX、beacon eb 等大块都落进 PSRAM，
+# 内部 RAM 只留给 DMA 需要的静态 RX 缓冲、驱动任务栈与业务任务。
+# M4 实测（内部 RAM 只剩约 41 KB 时）：关掉它，TX 池留在内部 RAM，静态 RX（最后分配）
+# 被挤掉 → esp_wifi_init 返回 ESP_ERR_NO_MEM；即使初始化通过，softAP 启动时
+# beacon eb（752 字节，走 wifi_zalloc）也分配失败 → 驱动空指针解引用，上电即重启。
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# ==================== 性能与缓存 ====================
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+# 体积优先（M4 体积门禁超限时再评估 PERF）
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# ==================== FreeRTOS / 系统任务 ====================
+CONFIG_FREERTOS_HZ=1000
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=3072
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+
+# ==================== WiFi 裁剪（仅 STA + SoftAP 配网） ====================
+# M4 加入 WiFi 后内部 RAM 极度紧张（face_task 要 12 KB 连续栈、LVGL 绘制缓冲必须在内、
+# 摄像头 DMA 缓冲也在内）。与 WiFi 缓冲相关的两条总原则：
+#   1) 能在 PSRAM 里的都放 PSRAM（prefer-SPIRAM，见文件开头）；
+#   2) 必须留在内部 RAM 的（DMA 访问的 RX）只保留最低数量。
+#
+# 静态 RX 缓冲固定在**内部 RAM**（DMA 访问），每项约 1.6 KB：实测 8 项时
+# esp_wifi_init 返回 ESP_ERR_NO_MEM；4 项是能稳定初始化的上限
+#（静态 RX 最后分配，前面的 TX/缓存池若留在内部 RAM 会把它挤掉）。
+# M4 再降到 2（Kconfig 下限）：识别/录入的**首次推理**会永久占掉约 6 KB 内部 RAM，
+# 只剩 2.6 KB 最大块时界面工作线程（3 KB 栈）创建失败——现场表现为“点注册/识别
+# 没反应”。本设备只有 MQTT 心跳/事件与配网表单这点流量，2 项静态 RX + 8 项动态 RX
+#（PSRAM）足够；省下的 3.2 KB 留给业务线程。
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=2
+# WiFi 要求 RX BA 窗口不大于静态 RX 缓冲数×2，裁剪后会触发编译检查
+CONFIG_ESP_WIFI_RX_BA_WIN=4
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=8
+# 接收管理帧缓冲改为**动态**：初始化时不再常驻预分配（默认静态 5 项约 2.5 KB）
+CONFIG_ESP_WIFI_DYNAMIC_RX_MGMT_BUFFER=y
+CONFIG_ESP_WIFI_RX_MGMT_BUF_NUM_DEF=3
+# TX 用静态缓冲 + 缓存队列（开启 prefer-SPIRAM 时动态 TX 受 Kconfig 限制无法选择）。
+# 静态 TX 每项约 1.6 KB **落在内部 RAM**（DMA 访问），M5 加语音后从 4 项降到 2 项
+# （省 3.2 KB）：本机上行只有 MQTT 日志/心跳/命令回执，都是小帧、低速率，
+# 2 个静态缓冲 + 4 个缓存队列足够；缓存队列按实际帧长分配，可落 PSRAM。
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER=y
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=2
+CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=4
+# 管理帧短缓冲（每项 500 字节，初始化时预分配，吃内部 RAM）：默认 32 项约 16 KB，
+# 降到下限 6 项约 3 KB。STA 关联 + 配网热点这一个客户端够用。
+#（IDF 5.x 里该值的 range 是 6~32，写到 6 以下会被 Kconfig 夹回默认 32——实测写 4
+# 时驱动日志打印的仍是 mgmt_sbuf=32，多占约 13 KB。）
+CONFIG_ESP_WIFI_MGMT_SBUF_NUM=6
+# 不用 WPA2-Enterprise（EAP/TLS）：关掉可省 Flash；它只会带来额外的证书/状态机代码
+CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
+CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=n
+CONFIG_ESP_WIFI_ENABLE_SAE_PK=n
+CONFIG_ESP_WIFI_ENABLE_WPA3_OWE_STA=n
+
+# ==================== SNTP 对时（M4） ====================
+# 3 个服务器（aliyun / cn.pool / pool），代码里按索引 0~2 设置
+CONFIG_LWIP_SNTP_MAX_SERVERS=3
+CONFIG_LWIP_SNTP_UPDATE_DELAY=900000
+
+# ==================== MQTT（巴法云） ====================
+# 只有启用自定义配置时，下面的缓冲区/栈设置才会生效
+CONFIG_MQTT_USE_CUSTOM_CONFIG=y
+CONFIG_MQTT_BUFFER_SIZE=2048
+CONFIG_MQTT_TASK_STACK_SIZE=6144
+
+# ==================== LVGL 8.3（M1 起接管屏幕与触摸） ====================
+# 使用 lvgl 组件 Kconfig（跳过工程内 lv_conf.h），屏幕为 RGB565 且面板按 BGR
+# 字节序接收，因此开启 16 位色交换
+CONFIG_LV_CONF_SKIP=y
+CONFIG_LV_COLOR_DEPTH_16=y
+CONFIG_LV_COLOR_16_SWAP=y
+# LVGL 堆仍是自带 TLSF allocator（LV_MEM_CUSTOM=n），但**内存池放到 PSRAM**：
+# main/CMakeLists.txt 给 lvgl__lvgl 组件注入
+#   LV_MEM_POOL_INCLUDE="lv_mem_psram.h" / LV_MEM_POOL_ALLOC=lv_mem_pool_alloc_psram，
+# 于是 48 KB 池由 ui/lv_mem_psram.c 从 PSRAM 分配，不再占用内部 RAM（.bss）。
+# 这是 M4 能同时跑 face_task(16 KB 连续栈) 与 WiFi 的关键。
+CONFIG_LV_MEM_SIZE_KILOBYTES=48
+# CONFIG_LV_MEM_CUSTOM is not set
+CONFIG_LV_DISP_DEF_REFR_PERIOD=30
+CONFIG_LV_INDEV_DEF_READ_PERIOD=30
+# UTF-8 中文渲染
+CONFIG_LV_TXT_ENC_UTF8=y
+# 字体回退：自定义中文字库缺字时回退到内置 Montserrat
+CONFIG_LV_USE_FONT_FALLBACK=y
+CONFIG_LV_FONT_MONTSERRAT_16=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_USE_LOG=n
+
+# 摄像头 DMA 走“内部 DMA 缓冲 → 帧缓冲”两段式拷贝（与参考例程
+# spi_lcd_dvp_Camera_Demo 一致），**不要**打开 CONFIG_CAMERA_PSRAM_DMA：
+# 直接 DMA 进 PSRAM 时需要靠 esp_cache_msync 失效 CPU 缓存，与 LVGL 预览
+# 读 PSRAM、Flash 操作交叠时容易读到旧行/半行，现场表现为
+# “画面一帧一帧从右向左平移、夹杂彩色花屏”。两段式拷贝只多一次 PSRAM 写入，
+# 却让 CPU 读到的一定是完整最新帧；当初开它只是为了省 Core0 的 memcpy。
+CONFIG_CAMERA_PSRAM_DMA=n
+# 两段式的 DMA 中转缓冲在**内部 RAM**、一次 heap_caps_malloc 连续申请，大小由本项决定。
+# 默认 32768 → 实际 30720 字节（QVGA RGB565 每像素 2 字节，按半缓冲 15360 对齐）。
+# M5 加语音后这块成了 WiFi 初始化的拦路虎：face_task 跑完后内部最大块只剩 19 KB，
+# esp_wifi_init 要的驱动缓冲申请不到，接着 voice_task 的 8 KB 栈也建不出来。
+# 降到 16384：半缓冲 7680 字节 = 12 行（240 % 12 == 0），整帧 307200 / 7680 = 40 段，
+# 半缓冲中断次数翻倍但每段拷贝量仍是 7.7 KB，实测帧率不变；省下 15 KB 连续内部 RAM。
+# M6 再降到 8192：MQTT 起来后内部只剩约 4.9 KB、最大连续块 1.8 KB，注册/设置页的
+# 3 KB 一次性线程直接创建失败，识别器首次推理也拿不到内部工作区（降级到 PSRAM 后
+# 单次识别从 200 ms 掉到 827 ms），内存耗尽后 newlib 连文件锁都分配不出来（abort）。
+# 8192 时半缓冲 3840 字节 = 6 行（240 % 6 == 0），整帧 153600 / 3840 = 40 段，
+# 每段仍有 3.8 KB，实测帧率不降；再省 7.7 KB 连续内部 RAM。
+# 驱动实际分配的是“环形 DMA 中转区”，大小不是本项原值：本项 8192 → 环形区 7680 字节
+# （2 个 3840 字节的节点 = 2 个半缓冲，双缓冲乒乓成立）；12288 → 11520 字节（3 节点）；
+# 16384 → 15360 字节（4 节点）；32768 → 30720 字节（8 节点）。半缓冲越大，cam_task 越有
+# 时间把上一段拷进帧缓冲。
+# M6 取 12288（环形区 3 个节点 = 5 ms 的余量）：环形区再大就要吃内部连续 RAM，16384 时
+# 配网热点起来后内部最大块只剩 4.6 KB，注册/设置页的 3 KB 线程和识别器首次推理会失败。
+# 注意：环形区余量只够吸收“几百微秒”的延迟；cam_task 一旦被拖住超过约 1.7 ms，整圈就会被
+# GDMA 覆盖、帧头丢失。真正让掉帧消失的是下面两条（Core1 + sys_monitor 不再长持内核锁）。
+CONFIG_CAMERA_DMA_BUFFER_SIZE_MAX=12288
+# 摄像头 DMA 中断的**处理任务**绑到 Core1（与 camera 采集任务同核）：
+# 相机每 6 行触发一次半缓冲中断（40 次/帧），cam_task 在中断里只入队、真正做
+# `memcpy(内部 DMA 区 → PSRAM 帧缓冲)` 的是 cam_task（优先级 configMAX_PRIORITIES-2 = 22）。
+# 默认它在 Core0，而 Core0 上有 WiFi 驱动任务（优先级 23，比它更高）、face_task(5)、
+# LCD 任务(5)、LVGL(1)、httpd/DHCP。绑到 Core1 后 cam_task 与采集任务独占该核
+# （Core1 只有采集任务与相机中断），不再被 WiFi 抢。
+#
+# 【M6 实测结论】掉帧（`cam_hal: FB-SIZE: 145920/149760 != 153600`）的真正根因不是“谁抢占
+# Core1”，而是**别的任务长时间持有 FreeRTOS 的 xKernelLock 内核自旋锁**：cam_task 被 VSYNC
+# 中断唤醒后要拿这把锁才能上 CPU，锁一被占住，GDMA 就继续把新帧写进环形中转区（3 节点
+# ≈ 1.7 ms），整圈覆盖后帧头丢失。元凶是 sys_monitor 每 5 s 的 uxTaskGetSystemState()——
+# 它在 xKernelLock 内遍历所有任务并扫描每个栈（face_task 16 KB、voice_task 8 KB 还在
+# PSRAM），实测持锁 2.5~3 ms，于是每 5 s 必掉一帧、且下一帧再连带丢 8 段。
+# 已在 sys_monitor.c 改为 `xTaskGetHandle() + uxTaskGetStackHighWaterMark()`（不持锁），
+# 90 s 连续实测 0 次 FB-SIZE。
+# 因此：改 sys_monitor / 诊断页时**不要再用 uxTaskGetSystemState()**，也不要在这条路径上
+# 加吃锁很久的调用；这是摄像头掉帧的第一嫌疑点。
+CONFIG_CAMERA_CORE1=y
+
+# ==================== ESP-SR 离线语音（M5） ====================
+# 模型 mmap 到自定义 model 分区（partitions.csv，3.5 MB）：必须同时放得下
+# 唤醒模型与中文命令词模型。
+#   wn9_hilexin（“Hi,乐鑫”）约 289 KB —— 非 TTS 唤醒模型里最好用的一档；
+#   mn7_cn（通用中文命令词）约 2.6 MB —— mn6_cn 有 3.6 MB，与唤醒词相加会溢出分区，
+#   所以只能用 mn7_cn。
+CONFIG_SR_WN_WN9_HILEXIN=y
+CONFIG_SR_MN_CN_MULTINET7_QUANT=y

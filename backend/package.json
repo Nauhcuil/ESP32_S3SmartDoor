@@ -1,0 +1,17 @@
+{
+  "name": "doorcam-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ESP32 人脸门禁（巴法云 MQTT）与微信小程序之间的 HTTPS 桥接后端（纯 JavaScript，零依赖）",
+  "type": "module",
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "start:env": "node --env-file=.env src/index.js",
+    "test": "node --test",
+    "probe": "node --env-file=.env scripts/probe.js",
+    "probe:readonly": "node --env-file=.env scripts/probe.js"
+  }
+}
